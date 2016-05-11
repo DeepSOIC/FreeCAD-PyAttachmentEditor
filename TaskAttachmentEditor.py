@@ -364,7 +364,7 @@ class AttachmentEditorTaskPanel(FrozenClass):
                 on = item.data(self.KEYon)
                 tip = [u", ".join(refstr) for refstr in self.attacher.getModeInfo(m)["ReferenceCombinations"]]
                 #todo: mode purpose tip
-                tip = u"Reference combinations:" + u"\n".join(tip) 
+                tip = u"Reference combinations"+u"\n" + u"\n".join(tip) 
                 item.setToolTip(tip)
 
         finally:
