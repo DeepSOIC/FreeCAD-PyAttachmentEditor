@@ -84,6 +84,7 @@ class AttachmentEditorTaskPanel(FrozenClass):
         self.block = False #when True, event handlers return without doing anything (instead of doing-undoing blockSignals to everything)
         self.refLines = [] #reference lineEdit widgets, packed into a list for convenience
         self.refButtons = [] #buttons next to reference lineEdits
+        self.superPlacementEdits = [] #all edit boxes related to superplacement
         self.i_active_ref = -1 #index of reference being selected (-1 means no reaction to selecting)
         self.auto_next = False #if true, references being selected are appended ("Selecting" state is automatically advanced to next button)
 
@@ -105,6 +106,7 @@ class AttachmentEditorTaskPanel(FrozenClass):
         import os
         self.form=uic.loadUi(os.path.dirname(__file__) + os.path.sep + "TaskAttachmentEditor.ui")
         # self.form.setWindowIcon(QtGui.QIcon(":/icons/PartDesign_InternalExternalGear.svg"))
+        self.form.setWindowTitle("Attachment")
         
         self.refLines = [self.form.lineRef1, 
                          self.form.lineRef2,
@@ -114,6 +116,12 @@ class AttachmentEditorTaskPanel(FrozenClass):
                            self.form.buttonRef2,
                            self.form.buttonRef3,
                            self.form.buttonRef4]
+        self.superPlacementEdits = [self.form.superplacementX,
+                                    self.form.superplacementY,
+                                    self.form.superplacementZ,
+                                    self.form.superplacementYaw,
+                                    self.form.superplacementPitch,
+                                    self.form.superplacementRoll]
                            
         self.block = False
                            
@@ -123,7 +131,11 @@ class AttachmentEditorTaskPanel(FrozenClass):
         for i in range(len(self.refLines)):
             QtCore.QObject.connect(self.refButtons[i], QtCore.SIGNAL("clicked()"), lambda i=i: self.refButtonClicked(i))
         
-        QtCore.QObject.connect(self.form.superplacementX, QtCore.SIGNAL("valueChanged(double)"), self.superplacementXChanged)
+        for i in range(len(self.superPlacementEdits)):
+            QtCore.QObject.connect(self.superPlacementEdits[i], QtCore.SIGNAL("valueChanged(double)"), lambda val, i=i: self.superplacementChanged(i,val))
+            
+        QtCore.QObject.connect(self.form.checkBoxFlip, QtCore.SIGNAL("clicked()"), self.checkBoxFlipClicked)
+        
         QtCore.QObject.connect(self.form.listOfModes, QtCore.SIGNAL("itemSelectionChanged()"), self.modeSelected)
         
         self.obj.Document.openTransaction("Edit attachment of {feat}".format(feat= self.obj.Name))
@@ -172,6 +184,9 @@ class AttachmentEditorTaskPanel(FrozenClass):
 
     #selectionObserver stuff
     def addSelection(self,docname,objname,subname,pnt):
+        # filter off circular references
+        # Oops! Looks like OutListComplete attribute hasn't made it into master...
+        # then, filter out just the object and direct dependent...            
         i = self.i_active_ref
         if i < 0:
             #not selecting any reference
@@ -183,11 +198,20 @@ class AttachmentEditorTaskPanel(FrozenClass):
                 # its subelement was already written to line[i-1], so we decrease i to overwrite the lineRefChanged
                 i -= 1
         if i > len(self.refLines)-1:
+            # all 4 references have been selected, finish
             assert(self.auto_next)
             self.i_active_ref = -1
             self.updateRefButtons()
             return
         if i > -1:
+            # assign the selected reference
+            if objname == self.obj.Name:
+                self.form.message.setText("Ignored. Can't attach object to itself!")
+                return
+            if App.getDocument(docname).getObject(objname) in self.obj.InList:
+                self.form.message.setText("{obj1} depends on object being attached, can't use it for attachment".format(obj1= objname))
+                return
+
             self.refLines[i].setText( StrFromLink(App.getDocument(docname).getObject(objname), subname) )
             self.lineRefChanged(i,"")
             if self.auto_next:
@@ -197,10 +221,40 @@ class AttachmentEditorTaskPanel(FrozenClass):
     
     # slots
 
-    def superplacementXChanged(self, value):
+    def superplacementChanged(self, index, value):
         if self.block:
             return
-        self.attacher.SuperPlacement.Base.x = value
+        plm = self.attacher.SuperPlacement
+        pos = plm.Base
+        if index==0:
+            pos.x = Q(self.form.superplacementX.text()).getValueAs(mm)
+        if index==1:
+            pos.y = Q(self.form.superplacementY.text()).getValueAs(mm)
+        if index==2:
+            pos.z = Q(self.form.superplacementZ.text()).getValueAs(mm)
+        if index >= 0  and  index <= 2:
+            plm.Base = pos
+
+        rot = plm.Rotation;
+        (yaw, pitch, roll) = rot.toEuler()
+        if index==3:
+            yaw = Q(self.form.superplacementYaw.text()).getValueAs(deg)
+        if index==4:
+            pitch = Q(self.form.superplacementPitch.text()).getValueAs(deg)
+        if index==5:
+            roll = Q(self.form.superplacementRoll.text()).getValueAs(deg)
+        if index >= 3  and  index <= 5:
+            rot = App.Rotation(yaw,pitch,roll)
+            plm.Rotation = rot
+        
+        self.attacher.SuperPlacement = plm
+        
+        self.updatePreview()
+
+    def checkBoxFlipClicked(self):
+        if self.block:
+            return
+        self.attacher.Reverse = self.form.checkBoxFlip.isChecked()
         self.updatePreview()
 
     def lineRefChanged(self, index, value):
@@ -240,12 +294,14 @@ class AttachmentEditorTaskPanel(FrozenClass):
         try:
             old_selfblock = self.block 
             self.block = True
-            self.form.superplacementX.setText    (Q(plm.Base.x, mm).UserString)
-            self.form.superplacementY.setText    (Q(plm.Base.y, mm).UserString)
-            self.form.superplacementZ.setText    (Q(plm.Base.z, mm).UserString)
-            self.form.superplacementYaw.setText  (Q(plm.Rotation.toEuler()[0], deg).UserString)
-            self.form.superplacementPitch.setText(Q(plm.Rotation.toEuler()[1], deg).UserString)
-            self.form.superplacementRoll.setText (Q(plm.Rotation.toEuler()[2], deg).UserString)
+            self.form.superplacementX.setText    ((plm.Base.x * mm).UserString)
+            self.form.superplacementY.setText    ((plm.Base.y * mm).UserString)
+            self.form.superplacementZ.setText    ((plm.Base.z * mm).UserString)
+            self.form.superplacementYaw.setText  ((plm.Rotation.toEuler()[0] * deg).UserString)
+            self.form.superplacementPitch.setText((plm.Rotation.toEuler()[1] * deg).UserString)
+            self.form.superplacementRoll.setText ((plm.Rotation.toEuler()[2] * deg).UserString)
+            
+            self.form.checkBoxFlip.setChecked(self.attacher.Reverse)
             
             strings = StrListFromRefs(self.attacher.References)
             if len(strings) < len(self.refLines):
