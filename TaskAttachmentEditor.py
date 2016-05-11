@@ -46,7 +46,11 @@ def RefsFromStrList(strings, document):
 
 class AttachmentEditorTaskPanel:
     '''The editmode TaskPanel for attachment editing'''
+    KEYmode = QtCore.Qt.ItemDataRole.UserRole # Key to use in Item.data(key) to obtain a mode associated with list item
+    KEYon = QtCore.Qt.ItemDataRole.UserRole + 1 # Key to use in Item.data(key) to obtain if the mode is valid
+    
     def __init__(self, obj_to_attach, bool_take_selection):
+                
         self.obj = obj_to_attach
         if hasattr(obj_to_attach,"Attacher"):
             self.attacher = obj_to_attach.Attacher
@@ -69,6 +73,8 @@ class AttachmentEditorTaskPanel:
                            self.form.buttonRef3,
                            self.form.buttonRef4]
                            
+        self.block = False
+                           
         for i in range(len(self.refLines)):
             QtCore.QObject.connect(self.refLines[i], QtCore.SIGNAL("textEdited(QString)"), lambda txt: self.lineRefChanged(i,txt))
 
@@ -79,6 +85,8 @@ class AttachmentEditorTaskPanel:
         
         self.readParameters()
         self.obj.Document.openTransaction("Edit attachment of {feat}".format(feat= self.obj.Name))
+        
+        self.updatePreview()
         
     def getStandardButtons(self):
         return int(QtGui.QDialogButtonBox.Ok) | int(QtGui.QDialogButtonBox.Cancel)| int(QtGui.QDialogButtonBox.Apply)
@@ -91,7 +99,6 @@ class AttachmentEditorTaskPanel:
         
     def writeParameters(self):
         "Transfer from the dialog to the object" 
-        #self.obj.PressureAngle  = self.form.Quantity_PressureAngle.text()
         self.attacher.writeParametersToFeature(self.obj)
         
     
@@ -101,8 +108,8 @@ class AttachmentEditorTaskPanel:
         
         plm = self.attacher.SuperPlacement
         try:
-            self.form.blockSignals(True)
-            self.form.superplacementX.blockSignals(True)
+            old_selfblock = self.block 
+            self.block = True
             self.form.superplacementX.setText    (Q(plm.Base.x, mm).UserString)
             self.form.superplacementY.setText    (Q(plm.Base.y, mm).UserString)
             self.form.superplacementZ.setText    (Q(plm.Base.z, mm).UserString)
@@ -116,29 +123,112 @@ class AttachmentEditorTaskPanel:
             for i in range(len(self.refLines)):
                 self.refLines[i].setText(strings[i])
         finally:
-            self.form.superplacementX.blockSignals(False)
-            self.form.superplacementX.blockSignals(False)
-            self.form.blockSignals(False)
+            self.block = old_selfblock
         
     def superplacementXChanged(self, value):
+        if self.block:
+            return
         print value
         self.attacher.SuperPlacement.Base.x = value
         self.updatePreview()
         
     def lineRefChanged(self, index, value):
+        if self.block:
+            return
         self.updatePreview()
             
     def refButtonClicked(self, index):
+        if self.block:
+            return
         print ("clicked button ",index)
     
     def parseAllRefLines(self):
         self.attacher.References = RefsFromStrList([le.text() for le in self.refLines], self.obj.Document)
+    
+    def updateListOfModes(self):
+        '''needs suggestor to have been called, and assigned to self.last_sugr'''
+        try:
+            old_selfblock = self.block 
+            self.block = True
+            list_widget = self.form.listOfModes
+            list_widget.clear()
+            sugr = self.last_sugr
+            # add valid modes
+            for m in sugr["allApplicableModes"]:
+                item = QtGui.QListWidgetItem()
+                item.setText(m)
+                item.setData(self.KEYmode,m)
+                item.setData(self.KEYon,True)
+                if m == sugr["bestFitMode"]:
+                    f = item.font()
+                    f.setBold(True)
+                    item.setFont(f)
+                list_widget.addItem(item)
+                item.setSelected(self.attacher.Mode == m)
+            # add potential modes
+            for m in sugr["reachableModes"].keys():
+                item = QtGui.QListWidgetItem()
+                txt = m
+                listlistrefs = sugr["reachableModes"][m]
+                if len(listlistrefs) == 1:
+                    txt = "{mode} (add {morerefs})".format(mode= m, morerefs= u"+".join(listlistrefs[0]))
+                else:
+                    txt = txt + u" (add more references)"
+                item.setText(txt)
+                item.setData(self.KEYmode,m)
+                item.setData(self.KEYon,True)
+                if m == sugr["bestFitMode"]:
+                    f = item.font()
+                    f.setBold(True)
+                    item.setFont(f)
+                
+                #disable this item
+                f = item.flags()
+                f = f & ~(QtCore.Qt.ItemFlag.ItemIsEnabled | QtCore.Qt.ItemFlag.ItemIsSelectable)
+                item.setFlags(f)
+                
+                list_widget.addItem(item)
+            
+            # re-scan the list to fill in tooltips
+            for item in list_widget.findItems("", QtCore.Qt.MatchContains):
+                m = item.data(self.KEYmode)
+                on = item.data(self.KEYon)
+                tip = [u", ".join(refstr) for refstr in self.attacher.getModeInfo(m)["ReferenceCombinations"]]
+                #todo: mode purpose tip
+                tip = u"Reference combinations:" + u"\n".join(tip) 
+                item.setToolTip(tip)
+
+        finally:
+            self.block = old_selfblock
         
+    def getCurrentMode(self):
+        list_widget = self.form.listOfModes
+        sel = list_widget.selectedItems()
+        if len(sel) == 1:
+            if sel[0].data(self.KEYon):
+                return str(sel[0].data(self.KEYmode)) # data() returns unicode, which confuses attacher
+        # nothing selected in list. Return suggested
+        if self.last_sugr is not None:
+            if self.last_sugr["message"] == "OK":
+                return self.last_sugr["bestFitMode"]
+        # no suggested mode. Return current, so it doesn't change
+        return self.attacher.Mode
+    
     def updatePreview(self):
         new_plm = None
-        try:
-            self.parseAllRefLines()
+        
+        # todo: wrap in error handler when finished debugging
+        self.parseAllRefLines()
+        self.last_sugr = self.attacher.suggestMapModes()
+        if self.last_sugr["message"] == "LinkBroken":
+            raise ValueError("Failed to resolve links. {err}".format(err= self.last_sugr["error"]))
             
+        self.updateListOfModes()
+        
+        print repr(self.getCurrentMode())
+        self.attacher.Mode = self.getCurrentMode()
+            
+        try:
             new_plm = self.attacher.calculateAttachedPlacement(self.obj.Placement)
             if new_plm is None:
                 self.form.message.setText("Not attached")
@@ -147,6 +237,11 @@ class AttachmentEditorTaskPanel:
                 self.obj.Placement = new_plm
         except Exception as err:
             self.form.message.setText("Error: {err}".format(err= err.message))
+        
+        if new_plm is not None:
+            self.form.groupBox_superplacement.setTitle("Extra placement:")
+        else:
+            self.form.groupBox_superplacement.setTitle("Extra placement (inactive - not attached):")
 
     def accept(self):
         #print 'accept(self)'
