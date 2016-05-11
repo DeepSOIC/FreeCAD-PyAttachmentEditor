@@ -28,7 +28,7 @@ def LinkFromStr(strlink, document):
     elif len(pieces) > 2:
         raise ValueError("Failed to parse link (more than one colon encountered)")
     
-    return (feature,subname)
+    return (feature,str(subname)) #wrap in str to remove unicode, which confuses assignment to PropertyLinkSubList.
 
 def StrListFromRefs(references):
     '''input: PropertyLinkSubList. Output: list of strings for UI.'''
@@ -42,15 +42,57 @@ def RefsFromStrList(strings, document):
         if lnk is not None:
             refs.append(lnk)
     return refs
-        
 
-class AttachmentEditorTaskPanel:
+def GetSelectionAsLinkSubList():
+    sel = Gui.Selection.getSelectionEx()
+    result = []
+    for selobj in sel:
+        for subname in selobj.SubElementNames:
+            result.append((selobj, subname))
+        if len(selobj.SubElementNames) == 0:
+            result.append((selobj, ""))
+    return result
+ 
+# from http://stackoverflow.com/a/3603824/6285007
+class FrozenClass(object):
+    '''FrozenClass: prevents adding new attributes to class outside of __init__'''
+    __isfrozen = False
+    def __setattr__(self, key, value):
+        if self.__isfrozen and not hasattr(self, key):
+            raise TypeError( "{cls} has no attribute {attr}".format(cls= self.__class__.__name__, attr= key) )
+        object.__setattr__(self, key, value)
+
+    def _freeze(self):
+        self.__isfrozen = True
+
+    def _unfreeze(self):
+        self.__isfrozen = False
+
+        
+class AttachmentEditorTaskPanel(FrozenClass):
     '''The editmode TaskPanel for attachment editing'''
     KEYmode = QtCore.Qt.ItemDataRole.UserRole # Key to use in Item.data(key) to obtain a mode associated with list item
     KEYon = QtCore.Qt.ItemDataRole.UserRole + 1 # Key to use in Item.data(key) to obtain if the mode is valid
     
+    def defineAttributes(self):
+        self.obj = None #feature being attached
+        self.attacher = None #AttachEngine that is being actively used by the dialog. Its parameters are constantly and actively kept in sync with the dialog.
+
+        self.last_sugr = None #result of last execution of suggestor
+
+        self.form = None #Qt widget of dialog interface
+        self.block = False #when True, event handlers return without doing anything (instead of doing-undoing blockSignals to everything)
+        self.refLines = [] #reference lineEdit widgets, packed into a list for convenience
+        self.refButtons = [] #buttons next to reference lineEdits
+        self.i_active_ref = -1 #index of reference being selected (-1 means no reaction to selecting)
+        self.auto_next = False #if true, references being selected are appended ("Selecting" state is automatically advanced to next button)
+
+        self._freeze()
+    
     def __init__(self, obj_to_attach, bool_take_selection):
-                
+        
+        self.defineAttributes()
+        
         self.obj = obj_to_attach
         if hasattr(obj_to_attach,"Attacher"):
             self.attacher = obj_to_attach.Attacher
@@ -76,32 +118,120 @@ class AttachmentEditorTaskPanel:
         self.block = False
                            
         for i in range(len(self.refLines)):
-            QtCore.QObject.connect(self.refLines[i], QtCore.SIGNAL("textEdited(QString)"), lambda txt: self.lineRefChanged(i,txt))
+            QtCore.QObject.connect(self.refLines[i], QtCore.SIGNAL("textEdited(QString)"), lambda txt, i=i: self.lineRefChanged(i,txt))
 
         for i in range(len(self.refLines)):
-            QtCore.QObject.connect(self.refButtons[i], QtCore.SIGNAL("clicked()"), lambda : self.refButtonClicked(i))
+            QtCore.QObject.connect(self.refButtons[i], QtCore.SIGNAL("clicked()"), lambda i=i: self.refButtonClicked(i))
         
         QtCore.QObject.connect(self.form.superplacementX, QtCore.SIGNAL("valueChanged(double)"), self.superplacementXChanged)
+        QtCore.QObject.connect(self.form.listOfModes, QtCore.SIGNAL("itemSelectionChanged()"), self.modeSelected)
         
-        self.readParameters()
         self.obj.Document.openTransaction("Edit attachment of {feat}".format(feat= self.obj.Name))
         
-        self.updatePreview()
         
+        if len(self.attacher.References) == 0 and bool_take_selection:
+            sel = GetSelectionAsLinkSubList()
+            for i in range(len(sel))[::-1]:
+                if sel[i][0] is obj_to_attach:
+                    sel.pop(i)
+            self.attacher.References = sel
+        if len(self.attacher.References) == 0:
+            self.i_active_ref = 0
+            self.auto_next = True
+        else:
+            self.i_active_ref = -1
+            self.auto_next = False
+
+        Gui.Selection.addObserver(self)
+
+        self.readParameters()
+
+        self.updatePreview()
+        self.updateRefButtons()
+    
+    # task dialog handling
     def getStandardButtons(self):
         return int(QtGui.QDialogButtonBox.Ok) | int(QtGui.QDialogButtonBox.Cancel)| int(QtGui.QDialogButtonBox.Apply)
     
     def clicked(self,button):
         if button == QtGui.QDialogButtonBox.Apply:
-            print "Apply"
             self.writeParameters()
             updatePreview()
+
+    def accept(self):
+        self.writeParameters()
+        self.obj.Document.commitTransaction()
+        self.cleanUp()
+        Gui.Control.closeDialog()
         
+    def reject(self):
+        self.obj.Document.abortTransaction()
+        self.cleanUp()
+        Gui.Control.closeDialog()
+
+
+    #selectionObserver stuff
+    def addSelection(self,docname,objname,subname,pnt):
+        i = self.i_active_ref
+        if i < 0:
+            #not selecting any reference
+            return
+        if i > 0 and self.auto_next:
+            prevref = LinkFromStr( self.refLines[i-1].text(), self.obj.Document )
+            if prevref[0].Name == objname and subname == "":
+                # whole object was selected by double-clicking
+                # its subelement was already written to line[i-1], so we decrease i to overwrite the lineRefChanged
+                i -= 1
+        if i > len(self.refLines)-1:
+            assert(self.auto_next)
+            self.i_active_ref = -1
+            self.updateRefButtons()
+            return
+        if i > -1:
+            self.refLines[i].setText( StrFromLink(App.getDocument(docname).getObject(objname), subname) )
+            self.lineRefChanged(i,"")
+            if self.auto_next:
+                i += 1
+        self.i_active_ref = i
+        self.updateRefButtons()
+    
+    # slots
+
+    def superplacementXChanged(self, value):
+        if self.block:
+            return
+        self.attacher.SuperPlacement.Base.x = value
+        self.updatePreview()
+
+    def lineRefChanged(self, index, value):
+        if self.block:
+            return
+        # not parsing links here, because doing it in updatePreview will display error message
+        self.updatePreview()
+
+    def refButtonClicked(self, index):
+        if self.block:
+            return
+        if self.i_active_ref == index:
+            #stop selecting
+            self.i_active_ref = -1
+        else:
+            #start selecting
+            self.i_active_ref = index
+            self.auto_next = False
+        self.updateRefButtons()
+    
+    def modeSelected(self):
+        if self.block: 
+            return
+        self.attacher.Mode = self.getCurrentMode()        
+        self.updatePreview()
+        
+    #internal methods
     def writeParameters(self):
         "Transfer from the dialog to the object" 
         self.attacher.writeParametersToFeature(self.obj)
         
-    
     def readParameters(self):
         "Transfer from the object to the dialog"
         self.attacher.readParametersFromFeature(self.obj)
@@ -125,23 +255,6 @@ class AttachmentEditorTaskPanel:
         finally:
             self.block = old_selfblock
         
-    def superplacementXChanged(self, value):
-        if self.block:
-            return
-        print value
-        self.attacher.SuperPlacement.Base.x = value
-        self.updatePreview()
-        
-    def lineRefChanged(self, index, value):
-        if self.block:
-            return
-        self.updatePreview()
-            
-    def refButtonClicked(self, index):
-        if self.block:
-            return
-        print ("clicked button ",index)
-    
     def parseAllRefLines(self):
         self.attacher.References = RefsFromStrList([le.text() for le in self.refLines], self.obj.Document)
     
@@ -200,7 +313,25 @@ class AttachmentEditorTaskPanel:
 
         finally:
             self.block = old_selfblock
-        
+
+    
+    def updateRefButtons(self):
+        try:
+            old_selfblock = self.block 
+            self.block = True
+            for i in range(len(self.refButtons)):
+                btn = self.refButtons[i]
+                btn.setCheckable(True)
+                btn.setChecked(self.i_active_ref == i)
+                typ = "Reference{i}".format(i= str(i+1))
+                if self.last_sugr is not None:
+                    typestr = self.last_sugr["references_Types"]
+                    if i < len(typestr):
+                        typ = typestr[i]#TODO: translate
+                btn.setText("Selecting..." if self.i_active_ref == i else typ)
+        finally:
+            self.block = old_selfblock
+            
     def getCurrentMode(self):
         list_widget = self.form.listOfModes
         sel = list_widget.selectedItems()
@@ -218,17 +349,16 @@ class AttachmentEditorTaskPanel:
         new_plm = None
         
         # todo: wrap in error handler when finished debugging
-        self.parseAllRefLines()
-        self.last_sugr = self.attacher.suggestMapModes()
-        if self.last_sugr["message"] == "LinkBroken":
-            raise ValueError("Failed to resolve links. {err}".format(err= self.last_sugr["error"]))
-            
-        self.updateListOfModes()
-        
-        print repr(self.getCurrentMode())
-        self.attacher.Mode = self.getCurrentMode()
-            
         try:
+            self.parseAllRefLines()
+            self.last_sugr = self.attacher.suggestMapModes()
+            if self.last_sugr["message"] == "LinkBroken":
+                raise ValueError("Failed to resolve links. {err}".format(err= self.last_sugr["error"]))
+                
+            self.updateListOfModes()
+            
+            self.attacher.Mode = self.getCurrentMode()
+            
             new_plm = self.attacher.calculateAttachedPlacement(self.obj.Placement)
             if new_plm is None:
                 self.form.message.setText("Not attached")
@@ -243,16 +373,10 @@ class AttachmentEditorTaskPanel:
         else:
             self.form.groupBox_superplacement.setTitle("Extra placement (inactive - not attached):")
 
-    def accept(self):
-        #print 'accept(self)'
-        self.writeParameters()
-        self.obj.Document.commitTransaction()
-        Gui.Control.closeDialog()
-                    
-    def reject(self):
-        #print 'reject(self)'
-        self.obj.Document.abortTransaction()
-        Gui.Control.closeDialog()
+    def cleanUp(self):
+        '''stuff that needs to be done when dialog is closed.'''
+        Gui.Selection.removeObserver(self)
+        
 
 
 taskd = None
