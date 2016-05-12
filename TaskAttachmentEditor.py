@@ -52,6 +52,11 @@ def GetSelectionAsLinkSubList():
         if len(selobj.SubElementNames) == 0:
             result.append((selobj, ""))
     return result
+    
+class CancelError(Exception):
+    def __init__(self):
+        self.message = "Canceled by user"
+        self.isCancelError = True
  
 # from http://stackoverflow.com/a/3603824/6285007
 class FrozenClass(object):
@@ -77,6 +82,7 @@ class AttachmentEditorTaskPanel(FrozenClass):
     def defineAttributes(self):
         self.obj = None #feature being attached
         self.attacher = None #AttachEngine that is being actively used by the dialog. Its parameters are constantly and actively kept in sync with the dialog.
+        self.obj_is_attachable = True # False when editing non-attachable objects (alignment, not attachment)
 
         self.last_sugr = None #result of last execution of suggestor
 
@@ -100,8 +106,20 @@ class AttachmentEditorTaskPanel(FrozenClass):
         elif hasattr(obj_to_attach,"AttacherType"):
             self.attacher = Part.AttachEngine(obj_to_attach.AttacherType)
         else:
-            raise TypeError("Object {objname} is not attachable. It has no Attacher attribute, and no AttacherType attribute"
-                             .format(objname= obj_to_attach.Label))
+            self.obj_is_attachable = False
+            self.attacher = Part.AttachEngine()
+            
+            mb = QtGui.QMessageBox()
+            mb.setIcon(mb.Icon.Warning)
+            mb.setText("{obj} is not attachable. You can still use attachment editor dialog to align the object, but the attachment won't be parametic."
+                       .format(obj= obj_to_attach.Label))
+            mb.setWindowTitle("Attachment")
+            btnAbort = mb.addButton(QtGui.QMessageBox.StandardButton.Abort)
+            btnOK = mb.addButton("Continue",QtGui.QMessageBox.ButtonRole.ActionRole)
+            mb.setDefaultButton(btnOK)
+            mb.exec_()
+            if mb.clickedButton() is btnAbort:
+                raise CancelError()
         
         import os
         self.form=uic.loadUi(os.path.dirname(__file__) + os.path.sep + "TaskAttachmentEditor.ui")
@@ -167,11 +185,13 @@ class AttachmentEditorTaskPanel(FrozenClass):
     
     def clicked(self,button):
         if button == QtGui.QDialogButtonBox.Apply:
-            self.writeParameters()
+            if self.obj_is_attachable:
+                self.writeParameters()
             updatePreview()
 
     def accept(self):
-        self.writeParameters()
+        if self.obj_is_attachable:
+            self.writeParameters()
         self.obj.Document.commitTransaction()
         self.cleanUp()
         Gui.Control.closeDialog()
@@ -288,7 +308,8 @@ class AttachmentEditorTaskPanel(FrozenClass):
         
     def readParameters(self):
         "Transfer from the object to the dialog"
-        self.attacher.readParametersFromFeature(self.obj)
+        if self.obj_is_attachable:
+            self.attacher.readParametersFromFeature(self.obj)
         
         plm = self.attacher.SuperPlacement
         try:
