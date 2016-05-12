@@ -158,6 +158,9 @@ class AttachmentEditorTaskPanel(FrozenClass):
         
         self.obj.Document.openTransaction("Edit attachment of {feat}".format(feat= self.obj.Name))
         
+
+        self.readParameters()
+
         
         if len(self.attacher.References) == 0 and bool_take_selection:
             sel = GetSelectionAsLinkSubList()
@@ -173,8 +176,6 @@ class AttachmentEditorTaskPanel(FrozenClass):
             self.auto_next = False
 
         Gui.Selection.addObserver(self)
-
-        self.readParameters()
 
         self.updatePreview()
         self.updateRefButtons()
@@ -346,7 +347,8 @@ class AttachmentEditorTaskPanel(FrozenClass):
             # add valid modes
             for m in sugr["allApplicableModes"]:
                 item = QtGui.QListWidgetItem()
-                item.setText(m)
+                txt = self.attacher.getModeInfo(m)["UserFriendlyName"]
+                item.setText(txt)
                 item.setData(self.KEYmode,m)
                 item.setData(self.KEYon,True)
                 if m == sugr["bestFitMode"]:
@@ -358,12 +360,14 @@ class AttachmentEditorTaskPanel(FrozenClass):
             # add potential modes
             for m in sugr["reachableModes"].keys():
                 item = QtGui.QListWidgetItem()
-                txt = m
+                txt = self.attacher.getModeInfo(m)["UserFriendlyName"]
                 listlistrefs = sugr["reachableModes"][m]
                 if len(listlistrefs) == 1:
-                    txt = "{mode} (add {morerefs})".format(mode= m, morerefs= u"+".join(listlistrefs[0]))
+                    listrefs_userfriendly = [self.attacher.getTypeInfo(t)["UserFriendlyName"] for t in listlistrefs[0]]
+                    txt = "{mode} (add {morerefs})".format(mode= txt, 
+                                                           morerefs= u"+".join(listrefs_userfriendly))
                 else:
-                    txt = txt + u" (add more references)"
+                    txt = "{mode} (add more references)".format(mode= txt)
                 item.setText(txt)
                 item.setData(self.KEYmode,m)
                 item.setData(self.KEYon,True)
@@ -383,9 +387,14 @@ class AttachmentEditorTaskPanel(FrozenClass):
             for item in list_widget.findItems("", QtCore.Qt.MatchContains):
                 m = item.data(self.KEYmode)
                 on = item.data(self.KEYon)
-                tip = [u", ".join(refstr) for refstr in self.attacher.getModeInfo(m)["ReferenceCombinations"]]
-                #todo: mode purpose tip
-                tip = u"Reference combinations"+u"\n" + u"\n".join(tip) 
+
+                mi = self.attacher.getModeInfo(m)
+                cmb = []
+                for refstr in mi["ReferenceCombinations"]:
+                    refstr_userfriendly = [self.attacher.getTypeInfo(t)["UserFriendlyName"] for t in refstr]
+                    cmb.append(u", ".join(refstr_userfriendly))
+                tip = u"{docu}\n\nReference combinations:\n{combinations}".format(docu=mi["BriefDocu"], combinations= u"\n".join(cmb) )
+
                 item.setToolTip(tip)
 
         finally:
@@ -404,7 +413,7 @@ class AttachmentEditorTaskPanel(FrozenClass):
                 if self.last_sugr is not None:
                     typestr = self.last_sugr["references_Types"]
                     if i < len(typestr):
-                        typ = typestr[i]#TODO: translate
+                        typ = self.attacher.getTypeInfo(typestr[i])["UserFriendlyName"]
                 btn.setText("Selecting..." if self.i_active_ref == i else typ)
         finally:
             self.block = old_selfblock
@@ -425,7 +434,6 @@ class AttachmentEditorTaskPanel(FrozenClass):
     def updatePreview(self):
         new_plm = None
         
-        # todo: wrap in error handler when finished debugging
         try:
             self.parseAllRefLines()
             self.last_sugr = self.attacher.suggestMapModes()
