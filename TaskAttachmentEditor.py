@@ -8,6 +8,8 @@ from FrozenClass import FrozenClass
 
 from TempoVis import TempoVis
 
+from DepGraphTools import getAllDependent
+
 if App.GuiUp:
     import FreeCADGui as Gui
     from PySide import QtCore, QtGui
@@ -199,9 +201,6 @@ class AttachmentEditorTaskPanel(FrozenClass):
 
     #selectionObserver stuff
     def addSelection(self,docname,objname,subname,pnt):
-        # filter off circular references
-        # Oops! Looks like OutListComplete attribute hasn't made it into master...
-        # then, filter out just the object and direct dependent...            
         i = self.i_active_ref
         if i < 0:
             #not selecting any reference
@@ -223,7 +222,7 @@ class AttachmentEditorTaskPanel(FrozenClass):
             if objname == self.obj.Name:
                 self.form.message.setText("Ignored. Can't attach object to itself!")
                 return
-            if App.getDocument(docname).getObject(objname) in self.obj.InList:
+            if App.getDocument(docname).getObject(objname) in getAllDependent(self.obj):
                 self.form.message.setText("{obj1} depends on object being attached, can't use it for attachment".format(obj1= objname))
                 return
 
