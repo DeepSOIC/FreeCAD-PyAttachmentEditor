@@ -363,7 +363,7 @@ class AttachmentEditorTaskPanel(FrozenClass):
                 txt = self.attacher.getModeInfo(m)["UserFriendlyName"]
                 listlistrefs = sugr["reachableModes"][m]
                 if len(listlistrefs) == 1:
-                    listrefs_userfriendly = [self.attacher.getTypeInfo(t)["UserFriendlyName"] for t in listlistrefs[0]]
+                    listrefs_userfriendly = [self.attacher.getRefTypeInfo(t)["UserFriendlyName"] for t in listlistrefs[0]]
                     txt = "{mode} (add {morerefs})".format(mode= txt, 
                                                            morerefs= u"+".join(listrefs_userfriendly))
                 else:
@@ -391,7 +391,7 @@ class AttachmentEditorTaskPanel(FrozenClass):
                 mi = self.attacher.getModeInfo(m)
                 cmb = []
                 for refstr in mi["ReferenceCombinations"]:
-                    refstr_userfriendly = [self.attacher.getTypeInfo(t)["UserFriendlyName"] for t in refstr]
+                    refstr_userfriendly = [self.attacher.getRefTypeInfo(t)["UserFriendlyName"] for t in refstr]
                     cmb.append(u", ".join(refstr_userfriendly))
                 tip = u"{docu}\n\nReference combinations:\n{combinations}".format(docu=mi["BriefDocu"], combinations= u"\n".join(cmb) )
 
@@ -413,7 +413,7 @@ class AttachmentEditorTaskPanel(FrozenClass):
                 if self.last_sugr is not None:
                     typestr = self.last_sugr["references_Types"]
                     if i < len(typestr):
-                        typ = self.attacher.getTypeInfo(typestr[i])["UserFriendlyName"]
+                        typ = self.attacher.getRefTypeInfo(typestr[i])["UserFriendlyName"]
                 btn.setText("Selecting..." if self.i_active_ref == i else typ)
         finally:
             self.block = old_selfblock
@@ -436,7 +436,7 @@ class AttachmentEditorTaskPanel(FrozenClass):
         
         try:
             self.parseAllRefLines()
-            self.last_sugr = self.attacher.suggestMapModes()
+            self.last_sugr = self.attacher.suggestModes()
             if self.last_sugr["message"] == "LinkBroken":
                 raise ValueError("Failed to resolve links. {err}".format(err= self.last_sugr["error"]))
                 
