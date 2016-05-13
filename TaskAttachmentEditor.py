@@ -4,6 +4,9 @@ from FreeCAD import Units
 from Units import MilliMetre as mm
 from Units import Degree as deg
 from Units import Quantity as Q
+from FrozenClass import FrozenClass
+
+from TempoVis import TempoVis
 
 if App.GuiUp:
     import FreeCADGui as Gui
@@ -57,29 +60,13 @@ class CancelError(Exception):
     def __init__(self):
         self.message = "Canceled by user"
         self.isCancelError = True
- 
-# from http://stackoverflow.com/a/3603824/6285007
-class FrozenClass(object):
-    '''FrozenClass: prevents adding new attributes to class outside of __init__'''
-    __isfrozen = False
-    def __setattr__(self, key, value):
-        if self.__isfrozen and not hasattr(self, key):
-            raise TypeError( "{cls} has no attribute {attr}".format(cls= self.__class__.__name__, attr= key) )
-        object.__setattr__(self, key, value)
-
-    def _freeze(self):
-        self.__isfrozen = True
-
-    def _unfreeze(self):
-        self.__isfrozen = False
-
         
 class AttachmentEditorTaskPanel(FrozenClass):
     '''The editmode TaskPanel for attachment editing'''
     KEYmode = QtCore.Qt.ItemDataRole.UserRole # Key to use in Item.data(key) to obtain a mode associated with list item
     KEYon = QtCore.Qt.ItemDataRole.UserRole + 1 # Key to use in Item.data(key) to obtain if the mode is valid
     
-    def defineAttributes(self):
+    def __define_attributes(self):
         self.obj = None #feature being attached
         self.attacher = None #AttachEngine that is being actively used by the dialog. Its parameters are constantly and actively kept in sync with the dialog.
         self.obj_is_attachable = True # False when editing non-attachable objects (alignment, not attachment)
@@ -93,12 +80,14 @@ class AttachmentEditorTaskPanel(FrozenClass):
         self.superPlacementEdits = [] #all edit boxes related to superplacement
         self.i_active_ref = -1 #index of reference being selected (-1 means no reaction to selecting)
         self.auto_next = False #if true, references being selected are appended ("Selecting" state is automatically advanced to next button)
+        
+        self.tv = None #TempoVis class instance
 
         self._freeze()
     
     def __init__(self, obj_to_attach, bool_take_selection):
         
-        self.defineAttributes()
+        self.__define_attributes()
         
         self.obj = obj_to_attach
         if hasattr(obj_to_attach,"Attacher"):
@@ -179,6 +168,11 @@ class AttachmentEditorTaskPanel(FrozenClass):
 
         self.updatePreview()
         self.updateRefButtons()
+        
+        self.tv = TempoVis(self.obj.Document)
+        self.tv.hide_all_dependent(self.obj)
+        self.tv.show(self.obj)
+        self.tv.show([obj for (obj,subname) in self.attacher.References])
     
     # task dialog handling
     def getStandardButtons(self):
@@ -461,6 +455,7 @@ class AttachmentEditorTaskPanel(FrozenClass):
     def cleanUp(self):
         '''stuff that needs to be done when dialog is closed.'''
         Gui.Selection.removeObserver(self)
+        self.tv.restore()
         
 
 
