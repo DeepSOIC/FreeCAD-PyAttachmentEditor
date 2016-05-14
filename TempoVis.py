@@ -4,7 +4,7 @@ if App.GuiUp:
 
 from FrozenClass import FrozenClass
 
-from DepGraphTools import getAllDependencies, getAllDependent, isGroup
+from DepGraphTools import getAllDependencies, getAllDependent, isContainer
 
 class TempoVis(FrozenClass):
     '''TempoVis - helper object to save visibilities of objects before doing 
@@ -55,7 +55,7 @@ class TempoVis(FrozenClass):
     
     def hide_all_dependent(self, doc_obj):
         '''hide_all_dependent(doc_obj): hides all objects that depend on doc_obj. Groups, Parts and Bodies are not hidden by this.'''
-        self.hide( [o for o in getAllDependent(doc_obj) if not isGroup(o)])
+        self.hide( [o for o in getAllDependent(doc_obj) if not isContainer(o)])
                 
     def show_all_dependent(self, doc_obj):
         '''show_all_dependent(doc_obj): shows all objects that depend on doc_obj. This method is probably useless.'''
