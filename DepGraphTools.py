@@ -154,13 +154,10 @@ def getTransformation(container_from, container_to):
     (list_leave, list_enter) = getContainerRelativePath(container_from, container_to)
 
     trf = App.Placement()
-    print "transform chain(first printed = first applied): "
     for cnt in list_leave[::-1]:
         if hasattr(cnt, "Placement"):
             trf = cnt.Placement.multiply(trf)
-            print cnt.Name," -> ",
     for cnt in list_enter:
         if hasattr(cnt, "Placement"):
             trf = cnt.Placement.inverse().multiply(trf)
-            print cnt.Name+"^-1", " -> ",
     return trf
