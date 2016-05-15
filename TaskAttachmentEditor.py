@@ -32,7 +32,7 @@ except AttributeError:
         return QtGui.QApplication.translate(context, text, disambig)
 #--------------------------/translation-related code ----------------------------------------
 
-    
+
 def StrFromLink(feature, subname):
     return feature.Name+ ((':'+subname) if subname else '')
     
@@ -76,6 +76,9 @@ def GetSelectionAsLinkSubList():
             result.append((selobj, ''))
     return result
     
+def noop():
+    return
+
 class CancelError(Exception):
     def __init__(self):
         self.message = 'Canceled by user'
@@ -102,12 +105,27 @@ class AttachmentEditorTaskPanel(FrozenClass):
         self.auto_next = False #if true, references being selected are appended ('Selecting' state is automatically advanced to next button)
         
         self.tv = None #TempoVis class instance
+        
+        self.create_transaction = True # if false, dialog doesn't mess with transactions.
+        self.callback_OK        = None
+        self.callback_Cancel    = None 
+        self.callback_Apply     = None 
 
         self._freeze()
     
-    def __init__(self, obj_to_attach, bool_take_selection):
+    def __init__(self, obj_to_attach,
+                       take_selection = False, 
+                       create_transaction = True,
+                       callback_OK        = None, 
+                       callback_Cancel    = None,
+                       callback_Apply     = None):
         
         self.__define_attributes()
+        
+        self.create_transaction = create_transaction
+        self.callback_OK        = callback_OK       
+        self.callback_Cancel    = callback_Cancel   
+        self.callback_Apply     = callback_Apply    
         
         self.obj = obj_to_attach
         if hasattr(obj_to_attach,'Attacher'):
@@ -115,6 +133,17 @@ class AttachmentEditorTaskPanel(FrozenClass):
         elif hasattr(obj_to_attach,'AttacherType'):
             self.attacher = Part.AttachEngine(obj_to_attach.AttacherType)
         else:
+            movable = True
+            if not hasattr(self.obj, "Placement"):
+                movable = False
+            if 'Hidden' in self.obj.getEditorMode("Placement") or 'ReadOnly' in self.obj.getEditorMode("Placement"):
+                movable = False
+            if not movable:
+                if self.callback_Cancel:
+                    self.callback_Cancel()
+                raise ValueError(_translate('AttachmentEditor',"Object {name} is neither movable nor attachable, can't edit attachment",None)
+                                 .format(name= self.obj.Label))
+                
             self.obj_is_attachable = False
             self.attacher = Part.AttachEngine()
             
@@ -130,6 +159,8 @@ class AttachmentEditorTaskPanel(FrozenClass):
             mb.setDefaultButton(btnOK)
             mb.exec_()
             if mb.clickedButton() is btnAbort:
+                if self.callback_Cancel:
+                    self.callback_Cancel()
                 raise CancelError()
         
         import os
@@ -167,13 +198,14 @@ class AttachmentEditorTaskPanel(FrozenClass):
         
         QtCore.QObject.connect(self.form.listOfModes, QtCore.SIGNAL('itemSelectionChanged()'), self.modeSelected)
         
-        self.obj.Document.openTransaction(_translate('AttachmentEditor',"Edit attachment of {feat}",None).format(feat= self.obj.Name))
+        if self.create_transaction:
+            self.obj.Document.openTransaction(_translate('AttachmentEditor',"Edit attachment of {feat}",None).format(feat= self.obj.Name))
         
 
         self.readParameters()
 
         
-        if len(self.attacher.References) == 0 and bool_take_selection:
+        if len(self.attacher.References) == 0 and take_selection:
             sel = GetSelectionAsLinkSubList()
             for i in range(len(sel))[::-1]:
                 if sel[i][0] is obj_to_attach:
@@ -204,19 +236,27 @@ class AttachmentEditorTaskPanel(FrozenClass):
         if button == QtGui.QDialogButtonBox.Apply:
             if self.obj_is_attachable:
                 self.writeParameters()
-            updatePreview()
+            self.updatePreview()
+            if self.callback_Apply:
+                self.callback_Apply()
 
     def accept(self):
         if self.obj_is_attachable:
             self.writeParameters()
-        self.obj.Document.commitTransaction()
+        if self.callback_OK:
+            self.callback_OK()
+        if self.create_transaction:
+            self.obj.Document.commitTransaction()
         self.cleanUp()
         Gui.Control.closeDialog()
         
     def reject(self):
-        self.obj.Document.abortTransaction()
+        if self.create_transaction:
+            self.obj.Document.abortTransaction()
         self.cleanUp()
         Gui.Control.closeDialog()
+        if self.callback_Cancel:
+            self.callback_Cancel()
 
 
     #selectionObserver stuff
@@ -476,16 +516,3 @@ class AttachmentEditorTaskPanel(FrozenClass):
         '''stuff that needs to be done when dialog is closed.'''
         Gui.Selection.removeObserver(self)
         self.tv.restore()
-        
-
-
-taskd = None
-
-def editAttachment(feature = None):
-    global taskd
-    if feature is None:
-        feature = Gui.Selection.getSelectionEx()[0].Object
-    taskd = AttachmentEditorTaskPanel(feature, bool_take_selection= False)
-    Gui.Control.showDialog(taskd)
-    
-# from AttachmentEditor import TaskAttachmentEditor as tae
