@@ -21,17 +21,18 @@
 # *                                                                         *
 # ***************************************************************************/
 
+from __future__ import absolute_import 
+
 import FreeCAD as App
 import Part
 from FreeCAD import Units
 from Units import MilliMetre as mm
 from Units import Degree as deg
 from Units import Quantity as Q
-from FrozenClass import FrozenClass
 
-from TempoVis import TempoVis
-
-from DepGraphTools import getAllDependent
+from AttachmentEditor.FrozenClass import FrozenClass
+from AttachmentEditor.TempoVis import TempoVis
+from AttachmentEditor.DepGraphTools import getAllDependent
 
 if App.GuiUp:
     import FreeCADGui as Gui

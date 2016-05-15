@@ -21,6 +21,8 @@
 # *                                                                         *
 # ***************************************************************************/
 
+from __future__ import absolute_import 
+
 import FreeCAD as App
 from PySide import QtCore
 
@@ -49,7 +51,7 @@ def editAttachment(feature = None,
     callback_Cancel: called after closing the dialog and aborting transaction.
     callback_Apply: invoked after writing values to feature.'''
     
-    import TaskAttachmentEditor
+    import AttachmentEditor.TaskAttachmentEditor as TaskAttachmentEditor
     global taskd # exposing to outside, for ease of debugging
     if feature is None:
         feature = Gui.Selection.getSelectionEx()[0].Object
